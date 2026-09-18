@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  /* Mobile-first: comfortable reading size by default. */
+  font-size: 16px;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* Large, thumb-friendly tap targets for primary actions. */
+.btn-primary {
+  @apply inline-flex min-h-touch w-full items-center justify-center rounded-xl bg-brand-600 px-5 py-3 text-base font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-300;
+}
+
+.btn-secondary {
+  @apply inline-flex min-h-touch w-full items-center justify-center rounded-xl border border-brand-200 bg-white px-5 py-3 text-base font-semibold text-brand-700 shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.card {
+  @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm;
+}

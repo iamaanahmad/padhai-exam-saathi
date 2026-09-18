@@ -1,0 +1,32 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# Env files (never commit secrets)
+.env
+.env.local
+.env*.local
+
+# AWS SAM
+backend/.aws-sam/
+.aws-sam/
+
+# Python
+__pycache__/
+*.pyc
+backend/**/__pycache__/
+backend/**/*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

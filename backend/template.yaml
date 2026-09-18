@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  PadhAI (ExamSaathi) backend - HTTP API + 3 Lambdas (analyze, save history,
+  get history) + S3 temp image storage + DynamoDB history table. Scales to
+  zero: no always-on compute, on-demand DynamoDB billing.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Description: >
+      Amazon Bedrock inference profile id used for multimodal analysis.
+      Current Anthropic Claude models on Bedrock require invocation through
+      an inference profile rather than a bare foundation-model id (verified
+      against the live account: on-demand InvokeModel/Converse on the bare
+      model id returns ValidationException). Default uses the system-defined
+      "US" geographic profile, which keeps routing within us-east-1/us-east-2/
+      us-west-2 (no data leaves the US) and needs no extra quota request,
+      unlike the "global." profile.
+    Default: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+  BedrockRegion:
+    Type: String
+    Description: AWS region to call the Bedrock inference profile from.
+    Default: "us-east-1"
+
+  BedrockFoundationModelId:
+    Type: String
+    Description: >
+      The underlying foundation model id behind BedrockModelId, with any
+      inference-profile region prefix (e.g. "us.") stripped off. Used to
+      build the per-region foundation-model ARNs IAM requires alongside the
+      inference-profile ARN.
+    Default: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+  AllowedOrigin:
+    Type: String
+    Description: >
+      Origin allowed to call this API via CORS (the deployed Amplify
+      frontend URL). Use http://localhost:3000 for local dev.
+    Default: "http://localhost:3000"
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 20
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        BEDROCK_REGION: !Ref BedrockRegion
+
+Resources:
+  # ---------------------------------------------------------------------
+  # HTTP API (API Gateway v2) - pay-per-request, scales to zero.
+  # ---------------------------------------------------------------------
+  PadhaiHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Session-Id
+
+  # ---------------------------------------------------------------------
+  # S3 bucket for temporary image uploads. Fully private, short lifecycle.
+  # ---------------------------------------------------------------------
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUploadsAfter1Day
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 1
+
+  # ---------------------------------------------------------------------
+  # DynamoDB table for saved Study_Results ("Weak Topics" history).
+  # On-demand billing so idle cost is $0.
+  # ---------------------------------------------------------------------
+  HistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: sessionId
+          AttributeType: S
+        - AttributeName: sortKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sessionId
+          KeyType: HASH
+        - AttributeName: sortKey
+          KeyType: RANGE
+
+  # ---------------------------------------------------------------------
+  # AnalyzeFn: POST /analyze
+  # Least privilege: S3 PutObject on uploads/* only, Bedrock invoke on the
+  # configured model only. No DynamoDB access.
+  # ---------------------------------------------------------------------
+  AnalyzeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: analyze/
+      Handler: app.handler
+      Environment:
+        Variables:
+          UPLOAD_BUCKET_NAME: !Ref UploadBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${UploadBucket.Arn}/uploads/*"
+            # Anthropic Claude models on Bedrock are invoked through system-
+            # defined inference profiles, not bare foundation-model ids
+            # (verified: on-demand InvokeModel/Converse on the bare model id
+            # returns ValidationException). Per AWS's documented IAM
+            # requirement, granting the inference-profile ARN is not enough -
+            # the underlying foundation-model ARN must also be granted in
+            # every region the profile can route to (us-east-1/us-east-2/
+            # us-west-2 for the default "us." geographic profile).
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:Converse
+              Resource:
+                - !Sub "arn:aws:bedrock:${BedrockRegion}:${AWS::AccountId}:inference-profile/${BedrockModelId}"
+                - !Sub "arn:aws:bedrock:us-east-1::foundation-model/${BedrockFoundationModelId}"
+                - !Sub "arn:aws:bedrock:us-east-2::foundation-model/${BedrockFoundationModelId}"
+                - !Sub "arn:aws:bedrock:us-west-2::foundation-model/${BedrockFoundationModelId}"
+      Events:
+        Analyze:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PadhaiHttpApi
+            Path: /analyze
+            Method: POST
+
+  # ---------------------------------------------------------------------
+  # SaveHistoryFn: POST /history
+  # Least privilege: PutItem on the history table only.
+  # ---------------------------------------------------------------------
+  SaveHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: save_history/
+      Handler: app.handler
+      Environment:
+        Variables:
+          HISTORY_TABLE_NAME: !Ref HistoryTable
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref HistoryTable
+      Events:
+        SaveHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PadhaiHttpApi
+            Path: /history
+            Method: POST
+
+  # ---------------------------------------------------------------------
+  # GetHistoryFn: GET /history
+  # Least privilege: Query (read) on the history table only.
+  # ---------------------------------------------------------------------
+  GetHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: get_history/
+      Handler: app.handler
+      Environment:
+        Variables:
+          HISTORY_TABLE_NAME: !Ref HistoryTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref HistoryTable
+      Events:
+        GetHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PadhaiHttpApi
+            Path: /history
+            Method: GET
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for the PadhAI HTTP API (set as NEXT_PUBLIC_API_BASE_URL)
+    Value: !Sub "https://${PadhaiHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  UploadBucketName:
+    Description: S3 bucket used for temporary image uploads
+    Value: !Ref UploadBucket
+
+  HistoryTableName:
+    Description: DynamoDB table used for saved Study_Results
+    Value: !Ref HistoryTable
