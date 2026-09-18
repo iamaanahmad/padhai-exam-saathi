@@ -129,6 +129,7 @@ Resources:
             - Effect: Allow
               Action:
                 - s3:PutObject
+                - s3:DeleteObject
               Resource: !Sub "${UploadBucket.Arn}/uploads/*"
             # Anthropic Claude models on Bedrock are invoked through system-
             # defined inference profiles, not bare foundation-model ids

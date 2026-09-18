@@ -1,10 +1,14 @@
 // Typed fetch wrappers for the PadhAI backend API. All requests attach the
 // browser's session id so results can be scoped per-student without login.
 
-import { getOrCreateSessionId } from "./session";
+import { getOrCreateSessionId, SessionIdentityError } from "./session";
 import type { AnalyzeRequest, HistoryItem, StudyResult } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+
+// Requirement 5.3: a history save must fail (with a retry option) if it
+// doesn't complete within 5 seconds.
+const SAVE_HISTORY_TIMEOUT_MS = 5000;
 
 export class ApiError extends Error {
   code: string;
@@ -16,7 +20,12 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
+interface RequestOptions extends RequestInit {
+  /** Optional client-side timeout in milliseconds (e.g. Requirement 5.3). */
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, init: RequestOptions): Promise<T> {
   if (!API_BASE_URL) {
     throw new ApiError(
       "missing_config",
@@ -24,19 +33,41 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     );
   }
 
+  let sessionId: string;
+  try {
+    sessionId = getOrCreateSessionId();
+  } catch (err) {
+    if (err instanceof SessionIdentityError) {
+      throw new ApiError("session_unavailable", err.message);
+    }
+    throw err;
+  }
+
+  const { timeoutMs, ...fetchInit } = init;
+  const controller = new AbortController();
+  const timeoutId = timeoutMs
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
+      ...fetchInit,
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        "X-Session-Id": getOrCreateSessionId(),
-        ...(init.headers ?? {}),
+        "X-Session-Id": sessionId,
+        ...(fetchInit.headers ?? {}),
       },
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("timeout", "The request took too long. Please try again.");
+    }
     // Network failure (offline, DNS, CORS, etc).
     throw new ApiError("network_error", "Could not reach the server.");
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
@@ -75,6 +106,7 @@ export async function saveHistory(
   return request("/history", {
     method: "POST",
     body: JSON.stringify({ studyResult }),
+    timeoutMs: SAVE_HISTORY_TIMEOUT_MS,
   });
 }
 

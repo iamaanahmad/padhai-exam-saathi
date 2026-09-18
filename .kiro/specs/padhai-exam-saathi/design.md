@@ -58,6 +58,8 @@ Next.js 14 App Router, TypeScript, Tailwind CSS. Three screens only, per steerin
 ### Session identity
 On first load, the client generates a UUID v4, stores it in `localStorage` (`padhai_session_id`), and sends it as `X-Session-Id` header on every API call. This satisfies Requirement 7 without requiring Cognito for the MVP. Cognito is called out as a stretch goal, not built, to stay in strict-MVP scope.
 
+If `localStorage` access throws (quota exceeded, storage disabled, some private-browsing modes), `session.ts`'s `getOrCreateSessionId()` raises a typed `SessionIdentityError` rather than silently proceeding without a session id; `lib/api.ts` catches this and surfaces it as an `ApiError` so upload/save actions fail with a clear message instead of sending requests with no session scoping (Req 7.3).
+
 ### API client
 A small `lib/api.ts` wraps `fetch` calls to the three routes, reading `NEXT_PUBLIC_API_BASE_URL` from env, attaching the session header, and normalizing errors into a typed `ApiError`.
 
@@ -84,18 +86,20 @@ components/
 
 ### Lambda: AnalyzeFn (`backend/analyze/app.py`)
 1. Parse JSON body: `{ mode: "image"|"text", text?, imageBase64?, imageMediaType?, language: "en"|"hi" }`.
-2. Validate: mode present, text ≤ constraints, image ≤ 10MB decoded and JPG/PNG only (mirrors Requirement 1 constraints server-side, since client-side validation is not trustworthy).
-3. If `mode === "image"`: decode base64, `put_object` to S3 with key `uploads/{sessionId}/{uuid}.{ext}`, tag object for lifecycle expiry (bucket lifecycle rule handles actual deletion — object doesn't need to be re-read from S3, we pass bytes directly to Bedrock to avoid a round trip and extra latency within the 10s budget).
+2. Validate: mode present, text 1-5000 chars (Req 1.6), image ≤ 10MB decoded and JPG/PNG only (mirrors Requirement 1 constraints server-side, since client-side validation is not trustworthy).
+3. If `mode === "image"`: decode base64, `put_object` to S3 with key `uploads/{sessionId}/{uuid}.{ext}`. If the S3 write fails, return an error immediately and do NOT invoke Bedrock (Req 3.2) — no partial object is left behind since `put_object` either fully succeeds or raises. On success, the object key is tracked so it can be explicitly deleted once processing finishes, success or failure (Req 3.4), independent of the bucket's 24h lifecycle rule (Req 3.3) which remains as a backstop if the delete call itself fails.
 4. Build Bedrock Converse API request with the system prompt (see below) and either an image block or a text block, plus the language instruction.
 5. Call `bedrock-runtime:Converse` with model ID from `BEDROCK_MODEL_ID` env var, region from `AWS_REGION` (Lambda-provided, but we surface `BEDROCK_REGION` explicitly for cross-region model access if needed).
-6. Parse the model's JSON output (model is instructed to return strict JSON). On parse failure or Bedrock error, return HTTP 502 with `{ error: "analysis_failed" }` — no partial result (Req 2.6).
+6. Parse the model's JSON output (model is instructed to return strict JSON). On parse failure or Bedrock error, return HTTP 502 with `{ error: "analysis_failed" }` — no partial result (Req 2.6). Parsed explanation/answers/revision suggestion are truncated to the Req 2.2 word ceilings (300/50/50 words) as a hard guarantee, independent of whether the model actually honored the prompt's stated limits.
 7. Enforce a client-side timeout budget: boto3 `read_timeout=15` on the Bedrock client matches the Req 2.7 threshold exactly, and the Lambda's own timeout is set to 20s in SAM template so the function has room to catch the read timeout and shape a graceful `{"error": "timeout"}` response instead of AWS hard-killing it mid-call. API Gateway's default timeout is 30s, so the Lambda timeout remains the binding constraint. (Verified against a real deployed request: a full prompt with system instructions took ~10.4s end to end, comfortably inside this budget.)
 8. Return `{ studyResult: { explanation, questions[3..5], revisionSuggestion, language } }`.
+
+**Image MIME-type mismatch fix**: some mobile gallery/camera pickers report an inaccurate `File.type` (observed live: Android sending real WebP bytes labeled `image/jpeg`), which Bedrock's Converse API rejects outright with a `ValidationException` since it validates the declared type against the actual bytes. Rather than trying to sniff/repair this server-side, the frontend (`UploadForm.tsx`) now decodes every selected image through an off-screen `<canvas>` and always re-encodes it as a genuine JPEG before upload — this guarantees the declared `imageMediaType` always matches the real bytes, regardless of the source file's reported type. This also removed the need for the `capture="environment"` attribute on the file input, which had been forcing the camera to open directly instead of letting the student choose from their gallery.
 
 ### Lambda: SaveHistoryFn (`backend/save_history/app.py`)
 1. Parse JSON body containing the `studyResult` plus `sessionId` (from header).
 2. Write item to DynamoDB: `{ sessionId (PK), sortKey: "<ISO timestamp>#<uuid>" (SK), createdAt, language, explanation, questions, revisionSuggestion, label }`. `label` = first ~60 chars of explanation, used for the history list without re-fetching full item.
-3. Return 201 with the saved item's id, or 500 with `{ error: "save_failed" }` on failure (Req 5.3).
+3. Return 201 with the saved item's id, or 500 with `{ error: "save_failed" }` on failure. The frontend enforces the Req 5.3 5-second ceiling client-side via `AbortController` (`lib/api.ts`'s `SAVE_HISTORY_TIMEOUT_MS`), since a Lambda-side timeout alone can't guarantee the student sees a failure within 5s if the round trip itself is slow.
 
 ### Lambda: GetHistoryFn (`backend/get_history/app.py`)
 1. Read `sessionId` from header.
@@ -125,14 +129,15 @@ No GSIs needed — all access is by sessionId, which matches Requirement 7.2.
 ## S3 bucket
 
 `padhai-uploads-{accountId}-{region}` (name finalized at deploy time via SAM):
-- Lifecycle rule: expire objects after 1 day (Req 3.2, well under any budget concern).
-- Block Public Access fully enabled (Req 3.3).
-- No bucket policy granting public access; only AnalyzeFn's execution role gets `s3:PutObject` on `uploads/*`.
+- Lifecycle rule: expire objects after 1 day (Req 3.3, well under any budget concern) as a backstop.
+- AnalyzeFn additionally deletes each temp upload object explicitly once processing finishes, success or failure (Req 3.4), so the lifecycle rule is rarely the thing actually removing objects.
+- Block Public Access fully enabled (Req 3.5).
+- No bucket policy granting public access; only AnalyzeFn's execution role gets `s3:PutObject` and `s3:DeleteObject` on `uploads/*`.
 - Server-side encryption (SSE-S3) enabled by default for defense in depth.
 
 ## IAM (least privilege)
 
-- **AnalyzeFn role**: `s3:PutObject` on `arn:aws:s3:::<bucket>/uploads/*`; `bedrock:InvokeModel`/`bedrock:Converse` on the specific model ARN from `BEDROCK_MODEL_ID`; basic Lambda logging (`CloudWatchLogsFullAccess`-equivalent scoped to its own log group via SAM's default policy).
+- **AnalyzeFn role**: `s3:PutObject` and `s3:DeleteObject` on `arn:aws:s3:::<bucket>/uploads/*`; `bedrock:InvokeModel`/`bedrock:Converse` on the specific model ARN from `BEDROCK_MODEL_ID`; basic Lambda logging (`CloudWatchLogsFullAccess`-equivalent scoped to its own log group via SAM's default policy).
 - **SaveHistoryFn role**: `dynamodb:PutItem` on the table ARN only.
 - **GetHistoryFn role**: `dynamodb:Query` on the table ARN only.
 - No function has access to a resource it doesn't need. No wildcard resources.
@@ -200,11 +205,11 @@ extra commentary before or after:
 
 `POST /analyze`
 ```
-Request:  { mode: "text"|"image", text?: string, imageBase64?: string, imageMediaType?: "image/jpeg"|"image/png", language: "en"|"hi" }
+Request:  { mode: "text"|"image", text?: string (1-5000 chars), imageBase64?: string, imageMediaType?: "image/jpeg"|"image/png", language: "en"|"hi" }
 Headers:  X-Session-Id: <uuid>
 Response 200: { studyResult: { explanation, questions: [{question,answer}], revisionSuggestion, language } }
 Response 400: { error: "invalid_request", message }
-Response 502: { error: "analysis_failed" }
+Response 502: { error: "analysis_failed" | "image_store_failed" }
 Response 504: { error: "timeout" }
 ```
 
@@ -227,12 +232,12 @@ CORS: API Gateway HTTP API CORS configured to allow the Amplify origin (and `htt
 
 ## Error handling & loading states (frontend)
 
-- Upload validation errors (wrong type, too large, empty submit) render inline under the form, no network call made (Req 1.3, 1.4, 1.6).
+- Upload validation errors (wrong type, too large, empty submit) render inline under the form, no network call made (Req 1.3, 1.4, 1.8).
 - While `/analyze` is in flight: submit button disabled, spinner + "Reading your material..." message (Req 2.4).
-- On `/analyze` failure (502/504/network): error banner "We couldn't analyze that. Please try again." with a Retry button that resubmits the same payload (Req 2.8, 8.2).
-- On `/history` POST failure: banner "Save failed, try again" with Retry (Req 5.3).
-- On `/history` GET failure: full-page retry state on the History screen (Req 6.5).
-- Empty history: friendly empty state, no error styling (Req 6.4).
+- On `/analyze` failure (502/504/network): error banner "We couldn't analyze that. Please try again." with a Retry button that resubmits the same payload (Req 2.8, 8.3). A previously displayed Study_Result, if any, stays visible underneath the error banner rather than being cleared (Req 4.4) — it's only replaced once a new Study_Result successfully arrives.
+- On `/history` POST failure (including the 5s client-side timeout): banner "Save failed, try again" with Retry (Req 5.3).
+- On `/history` GET failure: full-page retry state on the History screen (Req 6.6).
+- Empty history: friendly empty state, no error styling (Req 6.5).
 
 ## Deployment
 

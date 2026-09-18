@@ -31,6 +31,10 @@ export interface AnalyzeRequest {
   mode: UploadMode;
   text?: string;
   imageBase64?: string;
+  // The client always normalizes uploads to JPEG before sending (see
+  // UploadForm's normalizeImageToJpeg) to guarantee the declared type
+  // matches the actual bytes, regardless of what the source file/OS
+  // reported. The backend still also accepts PNG for direct API callers.
   imageMediaType?: "image/jpeg" | "image/png";
   language: Language;
 }

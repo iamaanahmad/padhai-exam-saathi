@@ -29,9 +29,15 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB, mirrors Requirement 1.4
-MAX_TEXT_CHARS = 1000  # mirrors Requirement 1.5
+MIN_TEXT_CHARS = 1  # mirrors Requirement 1.6
+MAX_TEXT_CHARS = 5000  # mirrors Requirement 1.6
 ACCEPTED_IMAGE_MEDIA_TYPES = {"image/jpeg": "jpeg", "image/png": "png"}
 ACCEPTED_LANGUAGES = {"en": "English", "hi": "Hindi"}
+
+# Requirement 2.2 word-count ceilings on the parsed Study_Result.
+MAX_EXPLANATION_WORDS = 300
+MAX_ANSWER_WORDS = 50
+MAX_REVISION_WORDS = 50
 
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION", os.environ.get("AWS_REGION", "us-east-1"))
@@ -69,14 +75,14 @@ Rules:
   unrelated to academics.
 - Explanation must be simple enough for a student who found the original
   material confusing: short sentences, everyday analogies, no unexplained
-  jargon.
+  jargon. Keep it to at most 300 words.
 - Practice questions must test the SAME concept from different angles
   (not copies of the original question), at a similar difficulty level.
-- Each answer must be short (1-3 sentences), correct, and directly usable
-  for self-checking.
+- Each answer must be short (1-3 sentences, at most 50 words), correct, and
+  directly usable for self-checking.
 - The revision suggestion must be one concrete, actionable next step
   (a specific sub-topic, formula, or type of problem to practice), not
-  generic advice like "study more".
+  generic advice like "study more". Keep it to at most 50 words.
 - If the uploaded material is not clearly academic content (e.g. an unrelated
   photo), still produce a best-effort explanation of whatever subject matter
   is closest to what's visible, plus 3-5 general study-skill or subject-entry
@@ -126,7 +132,7 @@ def _validate_and_extract(body: dict[str, Any]) -> dict[str, Any]:
 
     if mode == "text":
         text = (body.get("text") or "").strip()
-        if not text:
+        if len(text) < MIN_TEXT_CHARS:
             raise ValidationError("text must not be empty.")
         if len(text) > MAX_TEXT_CHARS:
             raise ValidationError(f"text must be at most {MAX_TEXT_CHARS} characters.")
@@ -161,16 +167,24 @@ def _validate_and_extract(body: dict[str, Any]) -> dict[str, Any]:
     raise ValidationError("mode must be 'text' or 'image'.")
 
 
-def _store_image(session_id: str, image_bytes: bytes, image_format: str) -> None:
+class ImageStoreError(Exception):
+    """Raised when the Image_Store write fails; per Requirement 3.2 this
+    must block the Bedrock invocation entirely (no partial object, no
+    analysis attempt on unpersisted material)."""
+
+
+def _store_image(session_id: str, image_bytes: bytes, image_format: str) -> str | None:
     """Persists the uploaded image to S3 before analysis (Requirement 3.1).
 
-    Failures here are logged but do not block analysis - losing the temp
-    upload copy is not worth failing the student's request over, since the
-    bytes are analyzed directly from memory regardless.
+    Returns the object key on success so the caller can delete it once
+    processing finishes (Requirement 3.4). Raises ImageStoreError on
+    failure - the caller must NOT proceed to invoke Bedrock in that case
+    (Requirement 3.2), and no partial object is left behind since
+    put_object either fully succeeds or raises.
     """
     if not UPLOAD_BUCKET_NAME:
         logger.warning("UPLOAD_BUCKET_NAME not set; skipping S3 storage of upload.")
-        return
+        return None
 
     key = f"uploads/{session_id}/{uuid.uuid4()}.{image_format}"
     try:
@@ -180,8 +194,24 @@ def _store_image(session_id: str, image_bytes: bytes, image_format: str) -> None
             Body=image_bytes,
             ContentType=f"image/{image_format}",
         )
-    except (BotoCoreError, ClientError):
+    except (BotoCoreError, ClientError) as exc:
         logger.exception("Failed to store uploaded image in S3 (key=%s)", key)
+        raise ImageStoreError("Could not save the uploaded image.") from exc
+
+    return key
+
+
+def _delete_image(key: str) -> None:
+    """Best-effort delete of the temp upload object once processing finishes
+    (Requirement 3.4), independent of the bucket's 24h lifecycle rule
+    (Requirement 3.3). A delete failure here is logged, not surfaced to the
+    student - the lifecycle rule remains as a backstop."""
+    if not UPLOAD_BUCKET_NAME:
+        return
+    try:
+        _s3_client.delete_object(Bucket=UPLOAD_BUCKET_NAME, Key=key)
+    except (BotoCoreError, ClientError):
+        logger.exception("Failed to delete temp upload object (key=%s)", key)
 
 
 def _build_converse_request(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -222,6 +252,15 @@ def _build_converse_request(parsed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _truncate_words(text: str, max_words: int) -> str:
+    """Enforces a word-count ceiling (Requirement 2.2) as a hard guarantee,
+    independent of whether the model actually honored the prompt's limit."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + "..."
+
+
 def _parse_model_output(raw_text: str) -> dict[str, Any]:
     text = raw_text.strip()
     if text.startswith("```"):
@@ -252,15 +291,20 @@ def _parse_model_output(raw_text: str) -> dict[str, Any]:
             and isinstance(item.get("question"), str)
             and isinstance(item.get("answer"), str)
         ):
-            clean_questions.append({"question": item["question"], "answer": item["answer"]})
+            clean_questions.append(
+                {
+                    "question": item["question"],
+                    "answer": _truncate_words(item["answer"], MAX_ANSWER_WORDS),
+                }
+            )
 
     if not (3 <= len(clean_questions) <= 5):
         raise ValueError("questions must contain between 3 and 5 items.")
 
     return {
-        "explanation": explanation,
+        "explanation": _truncate_words(explanation, MAX_EXPLANATION_WORDS),
         "questions": clean_questions,
-        "revisionSuggestion": revision_suggestion,
+        "revisionSuggestion": _truncate_words(revision_suggestion, MAX_REVISION_WORDS),
     }
 
 
@@ -287,32 +331,44 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         logger.error("BEDROCK_MODEL_ID is not configured.")
         return _response(502, {"error": "analysis_failed"})
 
+    image_key: str | None = None
     if parsed["mode"] == "image":
-        _store_image(session_id, parsed["image_bytes"], parsed["image_format"])
-
-    converse_request = _build_converse_request(parsed)
-
-    try:
-        response = _bedrock_client.converse(**converse_request)
-    except _bedrock_client.exceptions.ModelTimeoutException:
-        logger.warning("Bedrock model timed out for session %s", session_id)
-        return _response(504, {"error": "timeout"})
-    except ReadTimeoutError:
-        # Client-side (botocore) read timeout - the SDK gave up waiting on
-        # the HTTP response before Bedrock's own timeout fired.
-        logger.warning("Bedrock read timeout for session %s", session_id)
-        return _response(504, {"error": "timeout"})
-    except (BotoCoreError, ClientError):
-        logger.exception("Bedrock call failed for session %s", session_id)
-        return _response(502, {"error": "analysis_failed"})
+        try:
+            image_key = _store_image(session_id, parsed["image_bytes"], parsed["image_format"])
+        except ImageStoreError:
+            # Requirement 3.2: do not invoke Bedrock if the image couldn't
+            # be persisted.
+            return _response(502, {"error": "image_store_failed"})
 
     try:
-        content_blocks = response["output"]["message"]["content"]
-        raw_text = next(block["text"] for block in content_blocks if "text" in block)
-        study_result_data = _parse_model_output(raw_text)
-    except (KeyError, IndexError, StopIteration, ValueError, json.JSONDecodeError):
-        logger.exception("Failed to parse Bedrock response for session %s", session_id)
-        return _response(502, {"error": "analysis_failed"})
+        converse_request = _build_converse_request(parsed)
 
-    study_result_data["language"] = parsed["language"]
-    return _response(200, {"studyResult": study_result_data})
+        try:
+            response = _bedrock_client.converse(**converse_request)
+        except _bedrock_client.exceptions.ModelTimeoutException:
+            logger.warning("Bedrock model timed out for session %s", session_id)
+            return _response(504, {"error": "timeout"})
+        except ReadTimeoutError:
+            # Client-side (botocore) read timeout - the SDK gave up waiting
+            # on the HTTP response before Bedrock's own timeout fired.
+            logger.warning("Bedrock read timeout for session %s", session_id)
+            return _response(504, {"error": "timeout"})
+        except (BotoCoreError, ClientError):
+            logger.exception("Bedrock call failed for session %s", session_id)
+            return _response(502, {"error": "analysis_failed"})
+
+        try:
+            content_blocks = response["output"]["message"]["content"]
+            raw_text = next(block["text"] for block in content_blocks if "text" in block)
+            study_result_data = _parse_model_output(raw_text)
+        except (KeyError, IndexError, StopIteration, ValueError, json.JSONDecodeError):
+            logger.exception("Failed to parse Bedrock response for session %s", session_id)
+            return _response(502, {"error": "analysis_failed"})
+
+        study_result_data["language"] = parsed["language"]
+        return _response(200, {"studyResult": study_result_data})
+    finally:
+        # Requirement 3.4: delete the temp upload regardless of outcome,
+        # independent of the bucket's lifecycle rule.
+        if image_key:
+            _delete_image(image_key)

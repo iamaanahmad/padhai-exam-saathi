@@ -32,7 +32,10 @@ export default function HomePage() {
           ? err.message
           : "We couldn't analyze that. Please try again.";
       setError(message);
-      setResult(null);
+      // Requirement 4.4: retain the previously displayed Study_Result (if
+      // any) rather than clearing it on a failed retry or language switch -
+      // the Student shouldn't lose a good result because a follow-up
+      // request failed.
     } finally {
       setIsSubmitting(false);
     }
@@ -90,8 +93,11 @@ export default function HomePage() {
         <ErrorBanner message={error} onRetry={lastPayload ? handleRetry : undefined} />
       )}
 
-      {!isSubmitting && !error && result && (
-        <ResultView result={result} onSave={handleSave} />
+      {/* Requirement 4.4: a previously displayed Study_Result stays visible
+          even if a later request (retry, language switch) fails - it is
+          only replaced once a new Study_Result successfully arrives. */}
+      {!isSubmitting && result && (
+        <ResultView key={result.language} result={result} onSave={handleSave} />
       )}
     </div>
   );
