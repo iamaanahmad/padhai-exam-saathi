@@ -63,12 +63,15 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-900">
+        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-primary">
+          Explain & Practice
+        </p>
+        <h1 className="text-2xl font-bold leading-tight tracking-tight text-foreground">
           Turn any page into a lesson
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-2 text-[0.95rem] leading-relaxed text-muted">
           Upload a photo of your textbook or notes, or paste a question. Get a
           simple explanation, practice questions, and what to revise next.
         </p>

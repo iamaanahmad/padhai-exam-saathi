@@ -10,13 +10,13 @@ export default function LoadingSpinner({
     <div
       role="status"
       aria-live="polite"
-      className="flex flex-col items-center justify-center gap-3 py-10 text-center"
+      className="flex flex-col items-center justify-center gap-3 py-12 text-center"
     >
       <div
-        className="h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600"
+        className="h-9 w-9 animate-spin rounded-full border-[3px] border-primary/15 border-t-primary"
         aria-hidden="true"
       />
-      <p className="text-sm font-medium text-slate-500">{message}</p>
+      <p className="text-sm font-medium text-muted">{message}</p>
     </div>
   );
 }

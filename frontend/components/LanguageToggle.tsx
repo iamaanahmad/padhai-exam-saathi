@@ -20,7 +20,7 @@ export default function LanguageToggle({
     <div
       role="radiogroup"
       aria-label="Choose language"
-      className="inline-flex rounded-xl border border-slate-200 bg-white p-1"
+      className="inline-flex rounded-lg border border-border bg-surface p-0.5"
     >
       {(
         [
@@ -37,10 +37,10 @@ export default function LanguageToggle({
             aria-checked={selected}
             disabled={disabled}
             onClick={() => onChange(option.code)}
-            className={`min-h-touch rounded-lg px-4 py-2 text-sm font-semibold transition ${
+            className={`rounded-md px-3.5 py-1.5 text-sm font-semibold transition ${
               selected
-                ? "bg-brand-600 text-white shadow-sm"
-                : "text-slate-600 hover:bg-slate-100"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted hover:text-foreground"
             } disabled:opacity-50`}
           >
             {option.label}

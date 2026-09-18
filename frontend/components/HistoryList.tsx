@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { HistoryItem } from "@/lib/types";
+import { ChevronDownIcon, CompassIcon } from "./icons";
 
 interface HistoryListProps {
   items: HistoryItem[];
@@ -27,60 +28,60 @@ export default function HistoryList({ items }: HistoryListProps) {
       {items.map((item) => {
         const expanded = expandedId === item.id;
         return (
-          <li key={item.id} className="card">
+          <li key={item.id} className="surface-block overflow-hidden">
             <button
               type="button"
               onClick={() => setExpandedId(expanded ? null : item.id)}
               aria-expanded={expanded}
-              className="min-h-touch flex w-full items-center justify-between gap-3 text-left"
+              className="flex min-h-touch w-full items-center justify-between gap-3 px-4 py-3 text-left"
             >
-              <div>
-                <p className="font-semibold text-slate-900">{item.label}</p>
-                <p className="text-xs text-slate-400">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-foreground">{item.label}</p>
+                <p className="mt-0.5 text-xs text-muted">
                   {formatTimestamp(item.createdAt)} ·{" "}
                   {item.language === "hi" ? "हिंदी" : "English"}
                 </p>
               </div>
-              <span className="text-brand-600" aria-hidden="true">
-                {expanded ? "−" : "+"}
-              </span>
+              <ChevronDownIcon
+                className={`h-4 w-4 flex-none text-muted transition-transform ${
+                  expanded ? "rotate-180" : ""
+                }`}
+              />
             </button>
 
             {expanded && (
-              <div className="mt-4 flex flex-col gap-4 border-t border-slate-100 pt-4">
+              <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
                 <div>
-                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
+                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-primary">
                     Explanation
                   </h3>
-                  <p className="whitespace-pre-wrap text-sm text-slate-700">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                     {item.explanation}
                   </p>
                 </div>
                 <div>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-600">
-                    Practice Questions
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-primary">
+                    Practice questions
                   </h3>
-                  <ol className="flex flex-col gap-2">
+                  <ol className="divide-y divide-border rounded-xl bg-background">
                     {item.questions.map((q, index) => (
-                      <li key={index} className="rounded-lg bg-slate-50 p-2 text-sm">
-                        <p className="font-medium text-slate-800">
-                          {index + 1}. {q.question}
+                      <li key={index} className="p-3">
+                        <p className="text-sm font-semibold text-foreground">
+                          <span className="mr-1.5 text-muted">{index + 1}.</span>
+                          {q.question}
                         </p>
-                        <p className="mt-1 text-slate-600">
-                          <span className="font-semibold text-emerald-700">
-                            Answer:{" "}
-                          </span>
+                        <p className="mt-1 pl-5 text-sm leading-relaxed text-muted">
                           {q.answer}
                         </p>
                       </li>
                     ))}
                   </ol>
                 </div>
-                <div>
-                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-saffron-500">
-                    What to revise next
-                  </h3>
-                  <p className="text-sm text-slate-700">{item.revisionSuggestion}</p>
+                <div className="flex gap-2.5 rounded-xl bg-accent/10 p-3">
+                  <CompassIcon className="mt-0.5 h-4 w-4 flex-none text-accent" />
+                  <p className="text-sm leading-relaxed text-foreground">
+                    {item.revisionSuggestion}
+                  </p>
                 </div>
               </div>
             )}

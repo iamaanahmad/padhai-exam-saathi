@@ -8,31 +8,54 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Warm, student-friendly brand palette used across the app.
-        brand: {
-          50: "#f2f7ff",
-          100: "#e0edff",
-          200: "#b9d9ff",
-          300: "#8cc0ff",
-          400: "#5aa3ff",
-          500: "#2f7dfb",
-          600: "#1c5fdb",
-          700: "#1849ac",
-          800: "#163b85",
-          900: "#152f66",
+        // Semantic tokens backed by CSS variables (see app/globals.css).
+        // Never reference raw hex/slate/emerald/etc. in components -
+        // everything routes through one of these roles so the palette can
+        // be re-tuned in one place.
+        background: "hsl(var(--background) / <alpha-value>)",
+        foreground: "hsl(var(--foreground) / <alpha-value>)",
+        surface: "hsl(var(--surface) / <alpha-value>)",
+        border: "hsl(var(--border) / <alpha-value>)",
+        muted: "hsl(var(--muted-foreground) / <alpha-value>)",
+        primary: {
+          DEFAULT: "hsl(var(--primary) / <alpha-value>)",
+          foreground: "hsl(var(--primary-foreground) / <alpha-value>)",
         },
-        saffron: {
-          400: "#ffb347",
-          500: "#ff9f1c",
+        accent: {
+          DEFAULT: "hsl(var(--accent) / <alpha-value>)",
+          foreground: "hsl(var(--accent-foreground) / <alpha-value>)",
         },
+        success: {
+          DEFAULT: "hsl(var(--success) / <alpha-value>)",
+          foreground: "hsl(var(--success-foreground) / <alpha-value>)",
+        },
+        danger: {
+          DEFAULT: "hsl(var(--danger) / <alpha-value>)",
+          foreground: "hsl(var(--danger-foreground) / <alpha-value>)",
+        },
+        ring: "hsl(var(--ring) / <alpha-value>)",
       },
-      fontSize: {
-        // Ensure a comfortably readable base size on mobile.
-        base: ["1rem", "1.6"],
+      fontFamily: {
+        // Manrope for Latin/numerals, Noto Sans Devanagari as a same-stack
+        // fallback so Hindi output renders in a matching weight/style
+        // instead of dropping to the OS default serif/sans for Devanagari
+        // glyphs. Both are wired up as CSS variables in layout.tsx.
+        sans: [
+          "var(--font-manrope)",
+          "var(--font-noto-devanagari)",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
       },
       spacing: {
-        // Generous touch target helper (min 44px recommended tap size).
+        // Thumb-friendly minimum tap target (~44px), used on interactive
+        // controls. Everything else uses Tailwind's default 4px-based scale.
         touch: "2.75rem",
+      },
+      borderRadius: {
+        xl: "0.875rem",
+        "2xl": "1.25rem",
       },
     },
   },

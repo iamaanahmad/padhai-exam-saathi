@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import LanguageToggle from "./LanguageToggle";
+import { TextIcon, UploadCloudIcon } from "./icons";
 import type { AnalyzeRequest, Language, UploadMode } from "@/lib/types";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB, per Requirement 1.4
@@ -105,20 +106,11 @@ export default function UploadForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-semibold text-slate-600">Language</span>
-        <LanguageToggle
-          value={language}
-          onChange={onLanguageChange}
-          disabled={isSubmitting}
-        />
-      </div>
-
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <div
         role="tablist"
         aria-label="Choose input type"
-        className="grid grid-cols-2 gap-2"
+        className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1"
       >
         <button
           type="button"
@@ -126,12 +118,13 @@ export default function UploadForm({
           aria-selected={mode === "image"}
           disabled={isSubmitting}
           onClick={() => setMode("image")}
-          className={`min-h-touch rounded-xl border px-4 py-2 text-sm font-semibold transition ${
+          className={`flex min-h-touch items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition ${
             mode === "image"
-              ? "border-brand-600 bg-brand-50 text-brand-700"
-              : "border-slate-200 bg-white text-slate-600"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted hover:text-foreground"
           }`}
         >
+          <UploadCloudIcon className="h-4 w-4" />
           Upload photo
         </button>
         <button
@@ -140,12 +133,13 @@ export default function UploadForm({
           aria-selected={mode === "text"}
           disabled={isSubmitting}
           onClick={() => setMode("text")}
-          className={`min-h-touch rounded-xl border px-4 py-2 text-sm font-semibold transition ${
+          className={`flex min-h-touch items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition ${
             mode === "text"
-              ? "border-brand-600 bg-brand-50 text-brand-700"
-              : "border-slate-200 bg-white text-slate-600"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted hover:text-foreground"
           }`}
         >
+          <TextIcon className="h-4 w-4" />
           Paste text
         </button>
       </div>
@@ -154,9 +148,25 @@ export default function UploadForm({
         <div className="flex flex-col gap-2">
           <label
             htmlFor="image-upload"
-            className="min-h-touch flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-brand-300 bg-brand-50 px-4 py-6 text-center text-sm font-medium text-brand-700"
+            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-8 text-center transition ${
+              fileName
+                ? "border-primary/50 bg-primary/5"
+                : "border-border bg-surface hover:border-primary/40"
+            }`}
           >
-            {fileName ? `Selected: ${fileName}` : "Tap to take a photo or choose a file"}
+            <span
+              className={`flex h-11 w-11 items-center justify-center rounded-full ${
+                fileName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
+              }`}
+            >
+              <UploadCloudIcon className="h-5 w-5" />
+            </span>
+            <span className="text-sm font-semibold text-foreground">
+              {fileName ? fileName : "Tap to take a photo or choose a file"}
+            </span>
+            {!fileName && (
+              <span className="text-xs text-muted">JPG or PNG, up to 10 MB</span>
+            )}
           </label>
           <input
             id="image-upload"
@@ -168,7 +178,6 @@ export default function UploadForm({
             onChange={handleFileChange}
             className="sr-only"
           />
-          <p className="text-xs text-slate-400">JPG or PNG, up to 10 MB.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -179,16 +188,25 @@ export default function UploadForm({
             maxLength={MAX_TEXT_CHARS}
             rows={6}
             placeholder="Paste your notes or question here..."
-            className="w-full rounded-xl border border-slate-200 p-3 text-base focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            className="w-full rounded-2xl border border-border bg-surface p-3.5 text-[0.95rem] leading-relaxed placeholder:text-muted/70 focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring/30"
           />
-          <p className="text-right text-xs text-slate-400">
+          <p className="self-end text-xs text-muted">
             {text.length}/{MAX_TEXT_CHARS}
           </p>
         </div>
       )}
 
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-foreground">Language</span>
+        <LanguageToggle
+          value={language}
+          onChange={onLanguageChange}
+          disabled={isSubmitting}
+        />
+      </div>
+
       {error && (
-        <p role="alert" className="text-sm font-medium text-red-600">
+        <p role="alert" className="text-sm font-medium text-danger">
           {error}
         </p>
       )}
