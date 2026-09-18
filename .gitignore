@@ -22,6 +22,8 @@ backend/**/__pycache__/
 backend/**/*.pyc
 .venv/
 venv/
+hackathon-details.md
+P-R-D.md
 
 # Editor / OS
 .DS_Store
