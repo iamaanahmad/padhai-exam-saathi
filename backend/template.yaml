@@ -54,6 +54,56 @@ Globals:
 
 Resources:
   # ---------------------------------------------------------------------
+  # Cognito Identity Pool - issues a real, AWS-signed anonymous identity
+  # id per browser instead of a self-generated UUID. Unauthenticated
+  # (guest) access only, per steering: "Cognito for simple anonymous...
+  # login - do not build more auth than that." No user pool, no sign-in
+  # UI, no passwords - this exists purely to give each Student a
+  # Session_Identity that a client can't simply invent by guessing a
+  # plausible-looking string, since GetId requires a valid call against
+  # this specific identity pool.
+  #
+  # Deliberately NOT wired for direct browser-to-AWS calls (no IAM role
+  # grants DynamoDB/S3/Bedrock access) - all data access still goes
+  # through the Lambda functions below, which keeps validation and
+  # least-privilege IAM intact rather than trusting the browser directly.
+  # ---------------------------------------------------------------------
+  StudentIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${AWS::StackName}-students"
+      AllowUnauthenticatedIdentities: true
+
+  # IAM role assumed by anonymous (unauthenticated) identities. Intentionally
+  # has NO permissions attached - it exists only so Cognito will issue an
+  # IdentityId at all. The role grants nothing because the frontend never
+  # calls AWS directly with these credentials; it only uses the IdentityId
+  # string as the session identifier sent to our own API.
+  UnauthenticatedStudentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-unauth-student"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref StudentIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+
+  StudentIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref StudentIdentityPool
+      Roles:
+        unauthenticated: !GetAtt UnauthenticatedStudentRole.Arn
+
+  # ---------------------------------------------------------------------
   # HTTP API (API Gateway v2) - pay-per-request, scales to zero.
   # ---------------------------------------------------------------------
   PadhaiHttpApi:
@@ -206,6 +256,17 @@ Outputs:
   ApiBaseUrl:
     Description: Base URL for the PadhAI HTTP API (set as NEXT_PUBLIC_API_BASE_URL)
     Value: !Sub "https://${PadhaiHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  StudentIdentityPoolId:
+    Description: >
+      Cognito Identity Pool id (set as NEXT_PUBLIC_COGNITO_IDENTITY_POOL_ID).
+      Used only to obtain an anonymous IdentityId per browser via GetId -
+      never used for direct AWS SDK calls from the frontend.
+    Value: !Ref StudentIdentityPool
+
+  StudentIdentityPoolRegion:
+    Description: Region the identity pool lives in (set as NEXT_PUBLIC_COGNITO_REGION)
+    Value: !Ref AWS::Region
 
   UploadBucketName:
     Description: S3 bucket used for temporary image uploads

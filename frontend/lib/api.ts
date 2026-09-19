@@ -35,7 +35,7 @@ async function request<T>(path: string, init: RequestOptions): Promise<T> {
 
   let sessionId: string;
   try {
-    sessionId = getOrCreateSessionId();
+    sessionId = await getOrCreateSessionId();
   } catch (err) {
     if (err instanceof SessionIdentityError) {
       throw new ApiError("session_unavailable", err.message);

@@ -12,6 +12,7 @@ Env vars (see backend/template.yaml):
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import boto3
@@ -23,6 +24,10 @@ logger.setLevel(logging.INFO)
 
 HISTORY_TABLE_NAME = os.environ.get("HISTORY_TABLE_NAME", "")
 HISTORY_QUERY_LIMIT = 50
+
+# Matches a Cognito IdentityId ("region:guid", max ~55 chars per AWS's
+# GetId documentation) or a UUID v4 fallback (36 chars) - see _get_session_id.
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,36}(:[0-9a-fA-F-]{1,36})?$")
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -44,6 +49,14 @@ def _get_session_id(headers: dict[str, str]) -> str:
     session_id = normalized.get("x-session-id")
     if not session_id:
         raise ValidationError("Missing X-Session-Id header.")
+    # Session_Identity values are either a Cognito IdentityId ("region:guid",
+    # e.g. "ap-south-1:23ec4050-6aea-7089-a2dd-08002example", per AWS's
+    # documented format, max 55 chars) or a locally generated UUID v4
+    # fallback (36 chars) when Cognito isn't configured. Bound the length
+    # and character set to that shape rather than accepting an arbitrary
+    # client-supplied string as a DynamoDB partition key.
+    if not SESSION_ID_PATTERN.match(session_id):
+        raise ValidationError("X-Session-Id header is not a valid session identifier.")
     return session_id
 
 

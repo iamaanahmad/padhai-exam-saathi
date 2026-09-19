@@ -15,26 +15,29 @@ Design priorities driven by the hackathon rules and requirements.md:
 ## Architecture
 
 ```
-┌─────────────────┐        HTTPS         ┌──────────────────────┐
-│  Next.js 14 App  │ ───────────────────▶ │  API Gateway (HTTP)  │
-│  (Amplify Hosting)│ ◀─────────────────── │  api.padhai.*        │
-└─────────────────┘        JSON           └──────────┬───────────┘
-     │  session id in                                 │ routes
-     │  localStorage                     ┌─────────────┼─────────────┐
-     ▼                                   ▼             ▼             ▼
- browser                          ┌───────────┐ ┌────────────┐ ┌────────────┐
-                                   │AnalyzeFn  │ │SaveHistoryFn│ │GetHistoryFn│
-                                   │ (Lambda)  │ │  (Lambda)   │ │  (Lambda)  │
-                                   └─────┬─────┘ └──────┬──────┘ └──────┬─────┘
-                                         │              │              │
-                              ┌──────────┼───────┐      │              │
-                              ▼          ▼       │      ▼              ▼
-                        ┌──────────┐ ┌────────┐  │  ┌────────────────────┐
-                        │  S3      │ │Bedrock │  │  │   DynamoDB table   │
-                        │ (images, │ │Runtime │  │  │  padhai-history     │
-                        │ 24h TTL) │ │(Claude/│  │  │  PK=sessionId       │
-                        └──────────┘ │ Nova)  │  │  │  SK=createdAt#id    │
-                                     └────────┘  └─▶└────────────────────┘
+┌──────────────────┐  GetId (IdentityId only, no  ┌────────────────────────┐
+│  Next.js 15 App   │──AWS credentials requested)─▶│ Cognito Identity Pool  │
+│ (Amplify Hosting) │                              │ (unauthenticated only) │
+└─────────┬─────────┘                              └────────────────────────┘
+          │   HTTPS, header X-Session-Id: <IdentityId or UUID fallback>
+          ▼
+┌──────────────────────┐
+│  API Gateway (HTTP)  │
+└──────────┬────────────┘
+     ┌──────────────┼──────────────┐
+     ▼               ▼             ▼
+┌───────────┐ ┌─────────────┐ ┌────────────┐
+│AnalyzeFn  │ │SaveHistoryFn│ │GetHistoryFn│
+│ (Lambda)  │ │  (Lambda)   │ │  (Lambda)  │
+└─────┬─────┘ └──────┬──────┘ └──────┬─────┘
+      │              │               │
+ ┌────┼───────┐      │               │
+ ▼    ▼       │      ▼               ▼
+┌──────────┐ ┌────────┐  ┌────────────────────┐
+│  S3      │ │Bedrock │  │   DynamoDB table   │
+│ (images, │ │Runtime │  │  PK=sessionId       │
+│ 24h TTL) │ │(Claude)│  │  SK=createdAt#id    │
+└──────────┘ └────────┘  └────────────────────┘
 ```
 
 Three Lambda functions behind one HTTP API:
@@ -56,9 +59,13 @@ Next.js 14 App Router, TypeScript, Tailwind CSS. Three screens only, per steerin
 3. Shared layout: simple top bar with app name + nav link between Home and History. Mobile-first: single column, large tap targets (min 44px), readable font sizes (base 16px+).
 
 ### Session identity
-On first load, the client generates a UUID v4, stores it in `localStorage` (`padhai_session_id`), and sends it as `X-Session-Id` header on every API call. This satisfies Requirement 7 without requiring Cognito for the MVP. Cognito is called out as a stretch goal, not built, to stay in strict-MVP scope.
+On first load, the client requests an anonymous **Cognito Identity Pool** `IdentityId` (via `GetId`, `@aws-sdk/client-cognito-identity`), caches it in `localStorage` (`padhai_session_id`), and sends it as the `X-Session-Id` header on every API call. This satisfies Requirement 7 and the steering's "Cognito for simple anonymous... login — do not build more auth than that" guidance, without a user pool, sign-in UI, or passwords.
 
-If `localStorage` access throws (quota exceeded, storage disabled, some private-browsing modes), `session.ts`'s `getOrCreateSessionId()` raises a typed `SessionIdentityError` rather than silently proceeding without a session id; `lib/api.ts` catches this and surfaces it as an `ApiError` so upload/save actions fail with a clear message instead of sending requests with no session scoping (Req 7.3).
+This is deliberately minimal: no direct browser-to-AWS calls are made with Cognito credentials (the `UnauthenticatedStudentRole` in `template.yaml` grants zero permissions - it exists purely so Cognito issues an `IdentityId` at all). All actual data access still goes through the three Lambdas below; the frontend only ever uses the `IdentityId` as an opaque string. The real value over a client-generated UUID: a `GetId` call must succeed against this specific identity pool to obtain a valid id, so a would-be attacker can't just invent a plausible-looking string to guess at another student's history - though see the note under "Known limitations" below on what this protection does and doesn't cover.
+
+If `NEXT_PUBLIC_COGNITO_IDENTITY_POOL_ID`/`NEXT_PUBLIC_COGNITO_REGION` aren't configured, or the `GetId` call fails (network issue, Cognito outage), `session.ts` falls back to a locally generated UUID v4 cached the same way, so the app keeps working either way. If neither Cognito nor local UUID generation succeeds (e.g. `localStorage` itself is unavailable - quota exceeded, storage disabled, some private-browsing modes), `getOrCreateSessionId()` raises a typed `SessionIdentityError` rather than silently proceeding without a session id; `lib/api.ts` catches this and surfaces it as an `ApiError` so upload/save actions fail with a clear message instead of sending requests with no session scoping (Req 7.3).
+
+**Known limitation:** a Cognito `IdentityId` is still cached client-side (same `localStorage` key as the UUID fallback), so it does not survive clearing browser storage or switching devices - this is not full user authentication, and history is still tied to a browser/device, not a person. It also does not add server-side authorization: the Lambdas validate the header's *format* (see `SESSION_ID_PATTERN` below) but do not verify with Cognito that the identity is genuine, since doing so would require requesting Cognito credentials and using SigV4-signed requests end to end, which is a materially larger architectural change (direct browser-to-AWS calls, IAM permissions on the unauthenticated role, request signing) than the steering's "do not build more auth than that" scope allows for this MVP.
 
 ### API client
 A small `lib/api.ts` wraps `fetch` calls to the three routes, reading `NEXT_PUBLIC_API_BASE_URL` from env, attaching the session header, and normalizing errors into a typed `ApiError`.
@@ -140,7 +147,12 @@ No GSIs needed — all access is by sessionId, which matches Requirement 7.2.
 - **AnalyzeFn role**: `s3:PutObject` and `s3:DeleteObject` on `arn:aws:s3:::<bucket>/uploads/*`; `bedrock:InvokeModel`/`bedrock:Converse` on the specific model ARN from `BEDROCK_MODEL_ID`; basic Lambda logging (`CloudWatchLogsFullAccess`-equivalent scoped to its own log group via SAM's default policy).
 - **SaveHistoryFn role**: `dynamodb:PutItem` on the table ARN only.
 - **GetHistoryFn role**: `dynamodb:Query` on the table ARN only.
+- **UnauthenticatedStudentRole** (Cognito's unauthenticated identity role): zero permissions granted, by design - it exists only so `GetId` succeeds; the frontend never requests or uses AWS credentials via this role.
 - No function has access to a resource it doesn't need. No wildcard resources.
+
+## Session id validation (all three Lambdas)
+
+Each Lambda's `_get_session_id()` checks the `X-Session-Id` header against `SESSION_ID_PATTERN` - a regex accepting either a Cognito `IdentityId` shape (`region:guid`, up to ~55 chars per AWS's documented `GetId` format) or the 36-char UUID v4 fallback - before using it as a DynamoDB partition key or S3 key prefix. This bounds the value to a known shape rather than accepting an arbitrary client-supplied string, without hard-coding a Cognito-only format that would break the fallback path. Verified against real Cognito ID shapes, UUIDs, and oversized/injection-shaped garbage input; verified live against the deployed API (a 200+ char header is rejected with 400, a real Cognito `IdentityId` obtained via `GetId` is accepted end to end through `/analyze`, `POST /history`, and `GET /history`).
 
 ## Bedrock prompt strategy
 
@@ -241,9 +253,10 @@ CORS: API Gateway HTTP API CORS configured to allow the Amplify origin (and `htt
 
 ## Deployment
 
-- **Backend**: AWS SAM (`backend/template.yaml`) — `sam build && sam deploy --guided` once, then `sam deploy` for iterations. Outputs the HTTP API base URL.
-- **Frontend**: AWS Amplify Hosting connected to the Git repo, build settings for Next.js, env var `NEXT_PUBLIC_API_BASE_URL` set to the SAM-deployed API URL. Amplify gives the public HTTPS URL (Req 8.1).
+- **Backend**: AWS SAM (`backend/template.yaml`) — `sam build && sam deploy --guided` once, then `sam deploy` for iterations. Outputs the HTTP API base URL plus `StudentIdentityPoolId`/`StudentIdentityPoolRegion` for the Cognito Identity Pool. Deploying requires `CAPABILITY_NAMED_IAM` (not just `CAPABILITY_IAM`), since the unauthenticated role has an explicit `RoleName` rather than an auto-generated one.
+- **Frontend**: AWS Amplify Hosting connected to the Git repo, build settings for Next.js, env vars `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_COGNITO_IDENTITY_POOL_ID`, `NEXT_PUBLIC_COGNITO_REGION` set from the SAM deploy outputs. Amplify gives the public HTTPS URL (Req 8.1).
 - No VPC needed (Lambda calls S3/DynamoDB/Bedrock via AWS SDK over public AWS endpoints), which keeps cold starts low and avoids NAT gateway cost — an explicit cost-aware decision.
+- **Deploying with least-privilege credentials**: `backend/iam/padhai-deployer-policy.json` defines a scoped IAM policy for a dedicated deploy-only IAM user (`padhai-deployer`), covering exactly what `sam build`/`sam deploy` need for this stack (CloudFormation on this stack + SAM's managed deployment-bucket stack + the `Serverless-2016-10-31` transform ARN, this stack's S3/Lambda/DynamoDB/Cognito/IAM-role resources, and Bedrock discovery/invoke - the one deliberate `Resource: "*"` exception, since Bedrock's list/invoke actions don't support per-resource ARN scoping). Verified working end to end against the live stack, including the Cognito addition. See the README's "AWS credentials" section for setup steps.
 
 ## Testing approach
 

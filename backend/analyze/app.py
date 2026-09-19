@@ -18,6 +18,7 @@ import binascii
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any
 
@@ -33,6 +34,10 @@ MIN_TEXT_CHARS = 1  # mirrors Requirement 1.6
 MAX_TEXT_CHARS = 5000  # mirrors Requirement 1.6
 ACCEPTED_IMAGE_MEDIA_TYPES = {"image/jpeg": "jpeg", "image/png": "png"}
 ACCEPTED_LANGUAGES = {"en": "English", "hi": "Hindi"}
+
+# Matches a Cognito IdentityId ("region:guid", max ~55 chars per AWS's
+# GetId documentation) or a UUID v4 fallback (36 chars) - see _get_session_id.
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,36}(:[0-9a-fA-F-]{1,36})?$")
 
 # Requirement 2.2 word-count ceilings on the parsed Study_Result.
 MAX_EXPLANATION_WORDS = 300
@@ -120,6 +125,8 @@ def _get_session_id(headers: dict[str, str]) -> str:
     session_id = normalized.get("x-session-id")
     if not session_id:
         raise ValidationError("Missing X-Session-Id header.")
+    if not SESSION_ID_PATTERN.match(session_id):
+        raise ValidationError("X-Session-Id header is not a valid session identifier.")
     return session_id
 
 

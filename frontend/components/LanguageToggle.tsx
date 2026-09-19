@@ -37,7 +37,7 @@ export default function LanguageToggle({
             aria-checked={selected}
             disabled={disabled}
             onClick={() => onChange(option.code)}
-            className={`rounded-md px-3.5 py-1.5 text-sm font-semibold transition ${
+            className={`flex min-h-touch min-w-touch items-center justify-center rounded-md px-3.5 text-sm font-semibold transition ${
               selected
                 ? "bg-primary text-primary-foreground"
                 : "text-muted hover:text-foreground"

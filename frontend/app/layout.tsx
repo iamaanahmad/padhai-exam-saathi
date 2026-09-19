@@ -58,13 +58,13 @@ export default function RootLayout({
             <nav className="flex items-center gap-1 text-sm font-semibold text-muted">
               <Link
                 href="/"
-                className="rounded-lg px-3 py-1.5 transition hover:bg-primary/5 hover:text-primary"
+                className="flex min-h-touch items-center rounded-lg px-3 transition hover:bg-primary/5 hover:text-primary"
               >
                 Home
               </Link>
               <Link
                 href="/history"
-                className="rounded-lg px-3 py-1.5 transition hover:bg-primary/5 hover:text-primary"
+                className="flex min-h-touch items-center rounded-lg px-3 transition hover:bg-primary/5 hover:text-primary"
               >
                 History
               </Link>

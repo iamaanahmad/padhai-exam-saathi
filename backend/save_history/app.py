@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,10 @@ logger.setLevel(logging.INFO)
 HISTORY_TABLE_NAME = os.environ.get("HISTORY_TABLE_NAME", "")
 ACCEPTED_LANGUAGES = {"en", "hi"}
 LABEL_MAX_CHARS = 60
+
+# Matches a Cognito IdentityId ("region:guid", max ~55 chars per AWS's
+# GetId documentation) or a UUID v4 fallback (36 chars) - see _get_session_id.
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,36}(:[0-9a-fA-F-]{1,36})?$")
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -47,6 +52,8 @@ def _get_session_id(headers: dict[str, str]) -> str:
     session_id = normalized.get("x-session-id")
     if not session_id:
         raise ValidationError("Missing X-Session-Id header.")
+    if not SESSION_ID_PATTERN.match(session_id):
+        raise ValidationError("X-Session-Id header is not a valid session identifier.")
     return session_id
 
 
