@@ -4,6 +4,9 @@
 
 Built for the WeMakeDevs × AWS **First Commit** hackathon (Ship It track), Sept 17–20 2026.
 
+**Live app:** https://master.d3qsjwy8ni5jch.amplifyapp.com
+**Public repo:** https://github.com/iamaanahmad/padhai-exam-saathi
+
 ## The problem
 
 Indian students preparing for board exams, JEE, NEET, or university courses run into the same friction points every day:
@@ -54,7 +57,7 @@ PadhAI removes that friction: point your phone at a page, or paste a question, a
   - `POST /analyze` — validates the upload, stores images in S3, calls **Amazon Bedrock** (Converse API) with a tutoring system prompt, returns a structured explanation + practice questions + revision tip.
   - `POST /history` — saves a Study_Result to DynamoDB under the caller's session id.
   - `GET /history` — lists saved Study_Results for that session, newest first.
-- **Amazon Bedrock** — multimodal model (Claude 3.5 Sonnet by default, swappable to Amazon Nova) handles both the vision (photo) and text-only paths through the same Converse API call.
+- **Amazon Bedrock** — a multimodal model (Claude Sonnet 4.5 by default, via a system-defined inference profile — see "Setup & deployment" below for why, swappable to another Bedrock model) handles both the vision (photo) and text-only paths through the same Converse API call.
 - **S3** — temporary storage for uploaded images, fully private (Block Public Access), 1-day lifecycle expiry.
 - **DynamoDB** — single table, on-demand billing, partition key `sessionId` / sort key `sortKey` (`ISO timestamp#uuid`) so history reads come back newest-first with no extra indexes.
 - **Amazon Cognito** — an unauthenticated (anonymous) Identity Pool issues a real, AWS-signed `IdentityId` per browser, used as the session identifier instead of a purely client-generated UUID. No user pool, no sign-in UI, no passwords, and no direct browser-to-AWS calls with Cognito credentials — the unauthenticated IAM role it uses has zero permissions attached, since all data access still goes through the three Lambdas. Falls back to a local UUID if Cognito isn't configured or `GetId` fails, so the app keeps working either way.
@@ -153,10 +156,10 @@ npm run dev
 
 Production deploy via **AWS Amplify Hosting**:
 1. Push this repo to GitHub/GitLab.
-2. In the Amplify console, create a new app from your repo, set the app root to `frontend/`.
-3. Add the environment variable `NEXT_PUBLIC_API_BASE_URL` = the `ApiBaseUrl` output from `sam deploy`.
+2. In the Amplify console, create a new app from your repo. Since this is a monorepo (`frontend/` + `backend/` in one repo), set **Monorepo settings → App root** to `frontend` — Amplify will pick up `amplify.yml` at the repo root automatically.
+3. Add environment variables: `NEXT_PUBLIC_API_BASE_URL` (the `ApiBaseUrl` output from `sam deploy`), and optionally `NEXT_PUBLIC_COGNITO_IDENTITY_POOL_ID` / `NEXT_PUBLIC_COGNITO_REGION` (the `StudentIdentityPoolId` / `StudentIdentityPoolRegion` outputs).
 4. Deploy. Amplify gives you a public HTTPS URL.
-5. Re-run `sam deploy` for the backend with `AllowedOrigin` set to that Amplify URL, so CORS allows real traffic.
+5. Re-run `sam deploy` for the backend with `AllowedOrigin` set to that Amplify URL, so CORS allows real traffic — otherwise the deployed frontend will fail every API call with a CORS error even though the app looks like it loaded fine.
 
 ### Environment variables
 
@@ -173,9 +176,9 @@ No secrets are hardcoded anywhere in the repo; the Bedrock model id/region are d
 
 ## Security notes
 
-- S3 upload bucket has Block Public Access fully enabled and a 1-day lifecycle rule — nothing is retained longer than necessary.
+- S3 upload bucket has Block Public Access fully enabled and a 1-day lifecycle rule as a backstop; each analyzed image is also explicitly deleted right after processing (success or failure), so uploads are rarely retained even that long.
 - DynamoDB and S3 are only reachable through their respective Lambda's execution role; each Lambda has a distinct, least-privilege IAM policy (see `backend/template.yaml`) — for example, `AnalyzeFunction` can write images and call Bedrock but has no DynamoDB access at all.
-- There is no authentication layer in this MVP — access is scoped only by a client-generated session id stored in `localStorage`, not by verified identity. This is an explicit MVP tradeoff (see "Explicitly out of scope" below); anyone with a session id could read that session's history. Do not use this deployment for sensitive data. Adding Cognito would close this gap.
+- Session identity is an anonymous Cognito `IdentityId` (falling back to a locally generated UUID if Cognito isn't configured), sent as the `X-Session-Id` header and validated server-side against an expected format. This is stronger than a purely client-invented string — a real `GetId` call must succeed against this specific identity pool — but it is **not full authentication**: the id is still cached client-side, so it does not survive clearing browser storage or switching devices, and the backend does not cryptographically verify the header against Cognito on each request (that would require SigV4-signed requests end to end, a materially larger change than this MVP's scope). Anyone who obtains a valid session id could still read that session's history. Do not use this deployment for sensitive data.
 - The public API has no rate limiting beyond API Gateway defaults — acceptable for a hackathon demo, not for production traffic.
 
 ## Demo video
@@ -201,7 +204,11 @@ Per the hackathon MVP scope: full curriculum coverage, accounts beyond an anonym
 
 **Cost-aware architecture decisions, made deliberately:** DynamoDB on `PAY_PER_REQUEST` billing (not provisioned capacity) so idle cost is $0; no VPC for any Lambda, since none of them need to reach a private resource, which also avoids NAT gateway cost and keeps cold starts fast; S3 lifecycle rule expiring temp uploads after 1 day as a backstop, plus an explicit `s3:DeleteObject` call in the Lambda itself right after each analysis finishes (success or failure) so images are usually gone in seconds, not a day; and splitting `/analyze`, `POST /history`, and `GET /history` into three separate Lambdas specifically so IAM could stay least-privilege per function — the analyze function can write images and call Bedrock but has zero DynamoDB permissions, and the two history functions have zero S3/Bedrock permissions.
 
-**What we'd do differently with more time:** add a minimal authenticated identity layer (we kept session identity as a client-generated UUID in `localStorage` per the strict-MVP scope, which works but means history doesn't survive clearing browser storage or switching devices), and get automated tests running against the Lambda handlers' pure validation/parsing logic rather than relying on manual `curl`/PowerShell verification against the live stack for every change.
+**A real production timeout, caught after shipping.** Our Bedrock timeout budget (Lambda 20s, `read_timeout=15s`) was only ever validated against short toy text prompts that misleadingly completed in 1–10 seconds. A real handwritten-notes photo in production consistently took 15–17 seconds, tripping that 15s ceiling and surfacing as a 504 to a real student. We learned API Gateway's HTTP APIs hard-cap integration timeouts at 30 seconds with no way to raise it, which set the real ceiling for the fix: Lambda timeout to 29s, Bedrock `read_timeout` to 24s, and a trimmed `maxTokens` budget to reduce generation latency. Verified against the exact photo that had failed — 14.4 seconds after the fix.
+
+**Full anonymous Cognito, later than we should have added it.** We initially shipped with only a client-generated UUID for session identity, deferring Cognito as a stretch goal. Adding it later meant retrofitting an unauthenticated Cognito Identity Pool, an IAM role with deliberately zero permissions (it exists only so `GetId` succeeds — the frontend never requests real AWS credentials), and format validation on the session header across all three Lambdas — plus discovering along the way that CloudFormation's `IdentityPoolRoleAttachment` requires the role map key to be lowercase `"unauthenticated"`, not `"Unauthenticated"`, and that a named IAM role in the template requires `CAPABILITY_NAMED_IAM` instead of the more common `CAPABILITY_IAM`. Both would have been easy to plan for up front had we scoped this at the start instead of retrofitting it.
+
+**What we'd do differently with more time:** add a minimal-but-real automated test suite for the Lambda handlers' pure validation/parsing logic, rather than relying on manual `curl`/PowerShell verification against the live stack for every change — that manual process is exactly how we caught the timeout and Cognito issues above, but it doesn't scale as a long-term practice.
 
 ## License
 
