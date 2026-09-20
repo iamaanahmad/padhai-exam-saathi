@@ -10,6 +10,13 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 // doesn't complete within 5 seconds.
 const SAVE_HISTORY_TIMEOUT_MS = 5000;
 
+// Slightly above the backend's own budget (Lambda timeout 29s, Bedrock
+// read_timeout 24s within that - see backend/analyze/app.py) so the
+// backend's own graceful {"error": "timeout"} response wins the race in
+// the normal case; this is a client-side backstop for the rare case where
+// the connection itself hangs rather than the backend responding slowly.
+const ANALYZE_TIMEOUT_MS = 30000;
+
 export class ApiError extends Error {
   code: string;
 
@@ -95,6 +102,7 @@ export async function analyze(payload: AnalyzeRequest): Promise<StudyResult> {
   const data = await request<{ studyResult: StudyResult }>("/analyze", {
     method: "POST",
     body: JSON.stringify(payload),
+    timeoutMs: ANALYZE_TIMEOUT_MS,
   });
   return data.studyResult;
 }

@@ -43,7 +43,12 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 20
+    # 29s: the practical ceiling for a synchronous HTTP API integration.
+    # API Gateway v2 (HTTP API) hard-caps integration timeouts at 30s and
+    # this cannot be raised, so there is no point setting the Lambda
+    # timeout higher - anything beyond ~29s gets cut off by the Gateway
+    # regardless of what the Lambda itself is configured for.
+    Timeout: 29
     MemorySize: 512
     Architectures:
       - x86_64

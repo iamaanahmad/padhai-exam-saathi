@@ -48,14 +48,21 @@ BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION", os.environ.get("AWS_REGION", "us-east-1"))
 UPLOAD_BUCKET_NAME = os.environ.get("UPLOAD_BUCKET_NAME", "")
 
-# Requirement 2.7 specifies a 15s timeout threshold for the Bedrock call
-# itself. The Lambda's own timeout (20s in template.yaml) must exceed this
-# read_timeout so we can shape a graceful timeout response (Requirement 2.8)
-# instead of AWS hard-killing the function mid-call; the ~5s gap covers S3
-# write, JSON parsing, and cold-start/init overhead.
+# Real vision requests against actual handwritten notes/textbook photos
+# take meaningfully longer than the toy text-only prompts this was first
+# tuned against - observed live: 15-17s for a real notes photo, cut off by
+# an earlier, too-tight 15s read_timeout. API Gateway (HTTP API) hard-caps
+# integration timeouts at 30s and this cannot be raised, so 24s is the
+# practical ceiling for the Bedrock call itself: it leaves ~5s of the
+# Lambda's 29s timeout (see template.yaml) for S3 write/delete, JSON
+# parsing, and cold-start/init overhead, while still giving Bedrock enough
+# room to actually finish a real vision request before the Gateway would
+# cut the connection anyway. If Bedrock still doesn't respond within this
+# budget, we shape a graceful {"error": "timeout"} response (Req 2.8)
+# rather than being hard-killed by API Gateway with a bare 504.
 _bedrock_config = Config(
     region_name=BEDROCK_REGION,
-    read_timeout=15,
+    read_timeout=24,
     connect_timeout=3,
     retries={"max_attempts": 0},
 )
@@ -255,7 +262,15 @@ def _build_converse_request(parsed: dict[str, Any]) -> dict[str, Any]:
         "modelId": BEDROCK_MODEL_ID,
         "system": [{"text": system_prompt}],
         "messages": [{"role": "user", "content": content}],
-        "inferenceConfig": {"maxTokens": 2000, "temperature": 0.4},
+        # Sized to comfortably cover the actual output ceiling (300-word
+        # explanation + 5 x 50-word answers + 50-word revision suggestion
+        # is ~650 words, roughly 900 tokens for English; Hindi/Devanagari
+        # commonly tokenizes at a higher ratio, hence the buffer) rather
+        # than the previous 2000, which gave the model room to run well
+        # past what we actually keep - and directly added to generation
+        # latency, a real contributor to hitting the timeout on image
+        # requests.
+        "inferenceConfig": {"maxTokens": 1200, "temperature": 0.4},
     }
 
 
