@@ -118,6 +118,43 @@ export function CompassIcon({ className = "h-5 w-5" }: IconProps) {
   );
 }
 
+export function CameraIcon({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 8a2 2 0 0 1 2-2h1.2a1 1 0 0 0 .83-.45l1-1.5A1 1 0 0 1 8.86 3.5h6.28a1 1 0 0 1 .83.55l1 1.5a1 1 0 0 0 .83.45H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
+export function ImageIcon({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m21 15-5-5-4 4-2-2-5 5" />
+    </svg>
+  );
+}
+
 export function BookmarkIcon({ className = "h-5 w-5" }: IconProps) {
   return (
     <svg

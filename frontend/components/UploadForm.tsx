@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import LanguageToggle from "./LanguageToggle";
-import { TextIcon, UploadCloudIcon } from "./icons";
+import { CameraIcon, ImageIcon, TextIcon, UploadCloudIcon } from "./icons";
 import type { AnalyzeRequest, Language, UploadMode } from "@/lib/types";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB, per Requirement 1.4
@@ -83,13 +83,22 @@ export default function UploadForm({
   const [imageMediaType, setImageMediaType] = useState<"image/jpeg" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Two separate inputs, both feeding the same normalizeImageToJpeg
+  // pipeline below: cameraInputRef uses capture="environment" so mobile
+  // browsers jump straight to the camera; galleryInputRef has no capture
+  // hint so it always opens the photo/file picker. Kept as two explicit
+  // controls (rather than one input relying on the OS's combined picker
+  // UI) since some users find an explicit "Take photo" vs. "Choose from
+  // gallery" split clearer than trusting an ambiguous native chooser.
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   function resetImage() {
     setFileName(null);
     setImageBase64(null);
     setImageMediaType(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
   }
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -194,40 +203,76 @@ export default function UploadForm({
 
       {mode === "image" ? (
         <div className="flex flex-col gap-2">
-          <label
-            htmlFor="image-upload"
-            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-8 text-center transition ${
-              isProcessingImage ? "cursor-wait opacity-70" : ""
-            } ${
-              fileName
-                ? "border-primary/50 bg-primary/5"
-                : "border-border bg-surface hover:border-primary/40"
-            }`}
-          >
-            <span
-              className={`flex h-11 w-11 items-center justify-center rounded-full ${
-                fileName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
+          {fileName ? (
+            <div
+              className={`flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-8 text-center transition ${
+                isProcessingImage ? "opacity-70" : "border-primary/50 bg-primary/5"
               }`}
             >
-              <UploadCloudIcon className="h-5 w-5" />
-            </span>
-            <span className="text-sm font-semibold text-foreground">
-              {isProcessingImage
-                ? "Preparing photo..."
-                : fileName
-                  ? fileName
-                  : "Choose from gallery or take a photo"}
-            </span>
-            {!fileName && !isProcessingImage && (
-              <span className="text-xs text-muted">JPG, PNG, or WEBP, up to 10 MB</span>
-            )}
-          </label>
-          {/* No `capture` attribute: this lets mobile browsers offer their
-              native chooser (gallery OR camera) instead of forcing the
-              camera to open directly. */}
+              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <ImageIcon className="h-5 w-5" />
+              </span>
+              <span className="text-sm font-semibold text-foreground">
+                {isProcessingImage ? "Preparing photo..." : fileName}
+              </span>
+              {!isProcessingImage && (
+                <button
+                  type="button"
+                  onClick={resetImage}
+                  disabled={isSubmitting}
+                  className="min-h-touch text-sm font-semibold text-primary underline-offset-2 hover:underline"
+                >
+                  Choose a different photo
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                htmlFor="camera-upload"
+                className={`flex min-h-touch cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border bg-surface px-3 py-6 text-center transition hover:border-primary/40 ${
+                  isProcessingImage ? "cursor-wait opacity-70" : ""
+                }`}
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <CameraIcon className="h-5 w-5" />
+                </span>
+                <span className="text-sm font-semibold text-foreground">Take a photo</span>
+              </label>
+              <label
+                htmlFor="gallery-upload"
+                className={`flex min-h-touch cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border bg-surface px-3 py-6 text-center transition hover:border-primary/40 ${
+                  isProcessingImage ? "cursor-wait opacity-70" : ""
+                }`}
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <ImageIcon className="h-5 w-5" />
+                </span>
+                <span className="text-sm font-semibold text-foreground">Choose from gallery</span>
+              </label>
+            </div>
+          )}
+          {!fileName && !isProcessingImage && (
+            <p className="text-center text-xs text-muted">JPG, PNG, or WEBP, up to 10 MB</p>
+          )}
+          {/* capture="environment" jumps straight to the device camera on
+              mobile (desktop browsers that support webcam capture will
+              offer it too; others fall back to their default picker). */}
           <input
-            id="image-upload"
-            ref={fileInputRef}
+            id="camera-upload"
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            disabled={isSubmitting || isProcessingImage}
+            onChange={handleFileChange}
+            className="sr-only"
+          />
+          {/* No `capture` attribute: always opens the photo/file picker,
+              never the camera directly. */}
+          <input
+            id="gallery-upload"
+            ref={galleryInputRef}
             type="file"
             accept="image/*"
             disabled={isSubmitting || isProcessingImage}

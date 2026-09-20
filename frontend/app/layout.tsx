@@ -42,7 +42,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${manrope.variable} ${notoDevanagari.variable}`}>
       <body className="font-sans">
-        <div className="mx-auto flex min-h-screen max-w-lg flex-col">
+        <div className="app-shell overflow-hidden">
           <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
             <Link href="/" className="flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">

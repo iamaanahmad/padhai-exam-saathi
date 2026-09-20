@@ -40,8 +40,20 @@
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
+    /* Mobile-first app, deliberately capped at a phone-width column (see
+       .app-shell) - on wider screens (desktop demo recordings, judges on
+       a laptop) this gives the surrounding space a subtle branded
+       gradient instead of flat empty color, so it reads as an
+       intentional frame rather than unstyled/broken space. */
+    background: radial-gradient(
+        circle at 50% -10%,
+        hsl(var(--primary) / 0.08),
+        transparent 60%
+      ),
+      hsl(var(--background));
+    min-height: 100vh;
   }
 
   :focus-visible {
@@ -70,5 +82,13 @@
      block on the page. */
   .surface-block {
     @apply rounded-2xl border border-border bg-surface;
+  }
+
+  /* The app's phone-width content column. On mobile viewports this is
+     edge-to-edge and the shadow/border are invisible. On wider screens
+     (desktop browsers, demo recordings) it reads as a deliberate device
+     frame rather than a narrow column adrift in empty page background. */
+  .app-shell {
+    @apply mx-auto flex min-h-screen w-full max-w-lg flex-col bg-background sm:my-6 sm:min-h-[calc(100vh-3rem)] sm:rounded-3xl sm:border sm:border-border sm:shadow-xl;
   }
 }
