@@ -1,5 +1,12 @@
 # PadhAI (ExamSaathi)
 
+![Next.js](https://img.shields.io/badge/Next.js-black?style=for-the-badge&logo=next.js&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white) ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white) 
+
+![AWS Amplify](https://img.shields.io/badge/AWS_Amplify-FF9900?style=for-the-badge&logo=aws-amplify&logoColor=white) ![AWS Lambda](https://img.shields.io/badge/AWS_Lambda-FF9900?style=for-the-badge&logo=aws-lambda&logoColor=white) ![Amazon DynamoDB](https://img.shields.io/badge/Amazon_DynamoDB-4053D6?style=for-the-badge&logo=amazon-dynamodb&logoColor=white) ![Amazon S3](https://img.shields.io/badge/Amazon_S3-569A31?style=for-the-badge&logo=amazon-s3&logoColor=white) 
+
+![Anthropic Claude](https://img.shields.io/badge/Claude_3.5_Sonnet-1A1A1A?style=for-the-badge&logo=anthropic&logoColor=white) ![Amazon Bedrock](https://img.shields.io/badge/Amazon_Bedrock-00A4A6?style=for-the-badge&logo=amazon&logoColor=white)
+
+
 **Upload any page or notes → get a simple Hindi/English explanation + practice questions in seconds.**
 
 Built for the WeMakeDevs × AWS **First Commit** hackathon (Ship It track), Sept 17–20 2026.
