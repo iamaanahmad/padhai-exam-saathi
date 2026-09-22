@@ -9,8 +9,6 @@
 
 **Upload any page or notes → get a simple Hindi/English explanation + practice questions in seconds.**
 
-Built for the WeMakeDevs × AWS **First Commit** hackathon (Ship It track), Sept 17–20 2026.
-
 **Live app:** https://master.d3qsjwy8ni5jch.amplifyapp.com
 **Public repo:** https://github.com/iamaanahmad/padhai-exam-saathi
 
@@ -219,4 +217,4 @@ Per the hackathon MVP scope: full curriculum coverage, accounts beyond an anonym
 
 ## License
 
-Built for the First Commit hackathon. Add a license here if you plan to keep developing this beyond the event.
+MIT License
